@@ -90,6 +90,7 @@ jobs:
 
       # 提取純淨目錄並用官方 appimagetool 直接壓制為 AppImage
      # 提取純淨目錄並用官方 appimagetool 直接壓制為 AppImage
+      # 提取純淨目錄並用官方 appimagetool 直接壓制為 AppImage
       - name: Package with appimagetool
         run: |
           # 1. 抓取 deb 生成的純應用資源結構（無任何系統 .so 庫）
@@ -106,14 +107,13 @@ jobs:
           cp "$ICON_FILE" "AppDir/${BIN_NAME}.png"
           ln -sf "${BIN_NAME}.png" AppDir/.DirIcon
 
-          # 3. 寫入乾淨的 AppRun 啟動腳本
-          cat << 'EOF' > AppDir/AppRun
-#!/bin/sh
-HERE="$(dirname "$(readlink -f "$0")")"
-export PATH="${HERE}/usr/bin:${PATH}"
-BIN=$(find "${HERE}/usr/bin" -maxdepth 1 -type f -executable | head -n 1)
-exec "$BIN" "$@"
-EOF
+          # 3. 寫入乾淨的 AppRun 啟動腳本（使用單引號 printf，防止 GitHub Actions 解析器干擾）
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'HERE="$(dirname "$(readlink -f "$0")")"' \
+            'export PATH="${HERE}/usr/bin:${PATH}"' \
+            'BIN="$(find "${HERE}/usr/bin" -maxdepth 1 -type f -executable | head -n 1)"' \
+            'exec "$BIN" "$@"' > AppDir/AppRun
           chmod +x AppDir/AppRun
 
           # 4. 下載 appimagetool 壓制
