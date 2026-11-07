@@ -1,12 +1,12 @@
-name: Build and Release Linux AppImage
+name: Build and Release Clean AppImage
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release Tag (例如 v1.0.0)'
+        description: 'Release Tag (例如 v6.1.0-clean)'
         required: true
-        default: 'latest-build'
+        default: 'v6.1.0-clean'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,19 +14,20 @@ concurrency:
 
 jobs:
   build-and-release:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-22.04
 
     permissions:
-      contents: write # 必須給予 Release 寫入權限
+      contents: write
 
     env:
       APPIMAGE_EXTRACT_AND_RUN: 1
+      ARCH: x86_64
 
     steps:
       - name: Checkout main branch codebase
         uses: actions/checkout@v4
         with:
-          ref: main               # 明確拉取 main 分支的原始碼，而非本 workflow 分支
+          ref: main
           submodules: recursive
           fetch-depth: 0
 
@@ -80,21 +81,61 @@ jobs:
           node tauri-shell/stage-resources.mjs --target=linux --skip-npm
           node dsh-desktop/scripts/verify-staged-runtime.mjs
 
-      - name: Build Tauri AppImage bundle
+      # 僅藉助 deb 打包生成標準的目錄結構，完全不調用 linuxdeploy（零系統 .so 污染）
+      - name: Build with deb bundle layout
         working-directory: tauri-shell
         run: |
           cargo fetch --locked
-          npx -y @tauri-apps/cli@2 build --verbose --bundles appimage
+          npx -y @tauri-apps/cli@2 build --verbose --bundles deb
+
+      # 提取純淨目錄並用官方 appimagetool 直接壓制為 AppImage
+      - name: Package with appimagetool
+        run: |
+          # 1. 抓取 deb 生成的純應用資源結構（無任何系統 .so 庫）
+          DEB_DATA_DIR=$(find tauri-shell -type d -path "*/bundle/deb/*/data" | head -n 1)
+          mkdir -p AppDir
+          cp -r "$DEB_DATA_DIR"/* AppDir/
+
+          # 2. 依 AppImage 規範將 .desktop 與主圖標連結至 AppDir 根目錄
+          DESKTOP_FILE=$(find AppDir/usr/share/applications -name "*.desktop" | head -n 1)
+          ICON_FILE=$(find AppDir/usr/share/icons -name "*.png" | sort -V | tail -n 1)
+          BIN_NAME=$(basename $(find AppDir/usr/bin -maxdepth 1 -type f -executable | head -n 1))
+
+          cp "$DESKTOP_FILE" AppDir/
+          cp "$ICON_FILE" "AppDir/${BIN_NAME}.png"
+          ln -sf "${BIN_NAME}.png" AppDir/.DirIcon
+
+          # 3. 寫入乾淨的 AppRun 啟動腳本
+          cat << EOF > AppDir/AppRun
+#!/bin/sh
+HERE="\$(dirname "\$(readlink -f "\${0}")")"
+export PATH="\${HERE}/usr/bin:\${PATH}"
+exec "\${HERE}/usr/bin/${BIN_NAME}" "\$@"
+EOF
+          chmod +x AppDir/AppRun
+
+          # 4. 下載 appimagetool 壓制
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          chmod +x appimagetool
+
+          mkdir -p dist
+          ./appimagetool AppDir "dist/Deepseek-Harness-EAC-Linux-x86_64.AppImage"
+
+      # 自動將輸入的標籤中的空格轉為連字號，防止 Release 驗證失敗
+      - name: Sanitize Release Tag
+        id: sanitize_tag
+        run: |
+          RAW_TAG="${{ github.event.inputs.release_tag }}"
+          CLEAN_TAG=$(echo "$RAW_TAG" | tr -s ' ' '-' | tr -cd '[:alnum:]._-')
+          echo "tag=$CLEAN_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Create Release and Upload AppImage
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.release_tag }}
-          name: EAC-Desktop Linux (${{ github.event.inputs.release_tag }})
+          tag_name: ${{ steps.sanitize_tag.outputs.tag }}
+          name: EAC-Desktop Linux (${{ steps.sanitize_tag.outputs.tag }})
           draft: false
           prerelease: false
-          files: |
-            tauri-shell/src-tauri/target/release/bundle/appimage/*.AppImage
-            tauri-shell/target/release/bundle/appimage/*.AppImage
+          files: dist/*.AppImage
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
