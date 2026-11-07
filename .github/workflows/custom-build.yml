@@ -1,29 +1,32 @@
-name: Build Linux AppImage
+name: Build and Release Linux AppImage
 
 on:
-  push:
-    branches: [ main, master ]
-    tags:
-      - 'v*'
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release Tag (例如 v1.0.0)'
+        required: true
+        default: 'latest-build'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-appimage:
+  build-and-release:
     runs-on: ubuntu-22.04
+
+    permissions:
+      contents: write # 必須給予 Release 寫入權限
 
     env:
       APPIMAGE_EXTRACT_AND_RUN: 1
 
     steps:
-      - name: Checkout repository with submodules
+      - name: Checkout main branch codebase
         uses: actions/checkout@v4
         with:
+          ref: main               # 明確拉取 main 分支的原始碼，而非本 workflow 分支
           submodules: recursive
           fetch-depth: 0
 
@@ -83,11 +86,15 @@ jobs:
           cargo fetch --locked
           npx -y @tauri-apps/cli@2 build --verbose --bundles appimage
 
-      - name: Upload AppImage Artifact
-        uses: actions/upload-artifact@v4
+      - name: Create Release and Upload AppImage
+        uses: softprops/action-gh-release@v2
         with:
-          name: EAC-Desktop-Linux-x86_64-AppImage
-          path: |
+          tag_name: ${{ github.event.inputs.release_tag }}
+          name: EAC-Desktop Linux (${{ github.event.inputs.release_tag }})
+          draft: false
+          prerelease: false
+          files: |
             tauri-shell/src-tauri/target/release/bundle/appimage/*.AppImage
             tauri-shell/target/release/bundle/appimage/*.AppImage
-          if-no-files-found: error
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
