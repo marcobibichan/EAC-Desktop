@@ -1,0 +1,93 @@
+name: Build Linux AppImage
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-appimage:
+    runs-on: ubuntu-22.04
+
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: 1
+
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libfuse2 \
+            rpm \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install pnpm 11.7.0
+        run: npm install --global pnpm@11.7.0
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tauri-shell/src-tauri
+
+      - name: Verify DPX Pin
+        run: node tauri-shell/check-dpx-pin.mjs
+
+      - name: Build dsh-desktop and fetch runtime
+        working-directory: dsh-desktop
+        run: |
+          node scripts/fetch-kernel.js
+          npm run ci:install
+          npm run typecheck
+          npm run build
+          npm run fetch-runtime
+          npm test
+
+      - name: Stage resources for Linux
+        run: |
+          node tauri-shell/stage-resources.mjs --target=linux --skip-npm
+          node dsh-desktop/scripts/verify-staged-runtime.mjs
+
+      - name: Build Tauri AppImage bundle
+        working-directory: tauri-shell
+        run: |
+          cargo fetch --locked
+          npx -y @tauri-apps/cli@2 build --verbose --bundles appimage
+
+      - name: Upload AppImage Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EAC-Desktop-Linux-x86_64-AppImage
+          path: |
+            tauri-shell/src-tauri/target/release/bundle/appimage/*.AppImage
+            tauri-shell/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
