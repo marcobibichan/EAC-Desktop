@@ -89,6 +89,7 @@ jobs:
           npx -y @tauri-apps/cli@2 build --verbose --bundles deb
 
       # 提取純淨目錄並用官方 appimagetool 直接壓制為 AppImage
+     # 提取純淨目錄並用官方 appimagetool 直接壓制為 AppImage
       - name: Package with appimagetool
         run: |
           # 1. 抓取 deb 生成的純應用資源結構（無任何系統 .so 庫）
@@ -99,18 +100,19 @@ jobs:
           # 2. 依 AppImage 規範將 .desktop 與主圖標連結至 AppDir 根目錄
           DESKTOP_FILE=$(find AppDir/usr/share/applications -name "*.desktop" | head -n 1)
           ICON_FILE=$(find AppDir/usr/share/icons -name "*.png" | sort -V | tail -n 1)
-          BIN_NAME=$(basename $(find AppDir/usr/bin -maxdepth 1 -type f -executable | head -n 1))
+          BIN_NAME=$(basename "$(find AppDir/usr/bin -maxdepth 1 -type f -executable | head -n 1)")
 
           cp "$DESKTOP_FILE" AppDir/
           cp "$ICON_FILE" "AppDir/${BIN_NAME}.png"
           ln -sf "${BIN_NAME}.png" AppDir/.DirIcon
 
           # 3. 寫入乾淨的 AppRun 啟動腳本
-          cat << EOF > AppDir/AppRun
+          cat << 'EOF' > AppDir/AppRun
 #!/bin/sh
-HERE="\$(dirname "\$(readlink -f "\${0}")")"
-export PATH="\${HERE}/usr/bin:\${PATH}"
-exec "\${HERE}/usr/bin/${BIN_NAME}" "\$@"
+HERE="$(dirname "$(readlink -f "$0")")"
+export PATH="${HERE}/usr/bin:${PATH}"
+BIN=$(find "${HERE}/usr/bin" -maxdepth 1 -type f -executable | head -n 1)
+exec "$BIN" "$@"
 EOF
           chmod +x AppDir/AppRun
 
@@ -120,7 +122,7 @@ EOF
 
           mkdir -p dist
           ./appimagetool AppDir "dist/Deepseek-Harness-EAC-Linux-x86_64.AppImage"
-
+          
       # 自動將輸入的標籤中的空格轉為連字號，防止 Release 驗證失敗
       - name: Sanitize Release Tag
         id: sanitize_tag
