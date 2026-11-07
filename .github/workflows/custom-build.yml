@@ -97,4 +97,4 @@ jobs:
             tauri-shell/src-tauri/target/release/bundle/appimage/*.AppImage
             tauri-shell/target/release/bundle/appimage/*.AppImage
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
